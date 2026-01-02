@@ -1,0 +1,215 @@
+#%%
+
+import torch
+import torchvision
+import torchvision.transforms as transforms
+import torchvision.models as models
+from torchvision.datasets import ImageFolder
+
+import torch.nn as nn
+import torch.nn.functional as F
+
+import torch.optim as optim
+from torch.utils.data import DataLoader, random_split
+#%%
+
+# loading in plant dataset
+data_dir = "./data/plantvillage dataset/color"
+
+# define data transfomrations
+train_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+full_dataset = ImageFolder(data_dir, transform=train_transform)
+# %%
+
+# split intro train/val
+train_size = int(0.8 * len(full_dataset))
+val_size = len(full_dataset) - train_size
+trainset, valset = random_split(full_dataset, [train_size, val_size])
+
+#apply different transform to val set
+valset.dataset.transform = val_transform
+
+train_loader = DataLoader(trainset, batch_size=32, shuffle=True, num_workers=0)
+val_loader = DataLoader(valset, batch_size=32, shuffle=False, num_workers=0)
+
+print(f"Training samples: {len(trainset)}")
+print(f"Validation samples: {len(valset)}")
+print(f"Number of classes: {len(full_dataset.classes)}")
+print(f"Classes: {full_dataset.classes[:5]}...")  # Show first 5
+# %%
+
+class SimpleCNN(nn.Module):
+    def __init__(self, num_classes=38):
+        super(SimpleCNN, self).__init__()
+
+        #convultional layers
+        self.conv1 = nn.Conv2d(3, 32, 3, padding=1) # 3 input channels, 32 output
+        self.conv2 = nn.Conv2d(32, 64, 3, padding=1) # 32 input channels, 64 output
+        self.conv3 = nn.Conv2d(64, 64, 3, padding=1) # 64 input channels, 64 output
+
+        # pooling
+        self.pool = nn.MaxPool2d(2, 2)
+
+        # Fully connected layers
+        self.fc1 = nn.Linear( 64 * 28 * 28, 64)
+        self.fc2 = nn.Linear(64, num_classes) # 10 classes
+
+        # Dropout
+        self.dropout = nn.Dropout(0.25)
+
+
+    def forward(self, x):
+        # conv blocks
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+
+        # flatten
+        x = x.view(-1, 64 * 28 * 28)
+
+        # FC layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
+
+#%%
+
+# initialize
+num_classes = len(full_dataset.classes)
+model = SimpleCNN(num_classes=num_classes)
+print(model)
+
+# count parameters
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total Params: {total_params}")
+# %%
+
+# setup
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+model = model.to(device)
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.0010)
+
+#%%
+# training function
+def train_epoch(model, loader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    for inputs, labels in loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+
+    return running_loss / len(loader), 100. * correct / total
+    
+# evaluation function
+
+def evaluate(model, loader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for inputs, labels in loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    
+    return running_loss / len(loader), 100. * correct / total
+
+#%%
+
+# running training for ten epochs
+
+for epoch in range(10):
+    train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+    val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+
+    print(f"Epoch {epoch+1}/10")
+    print(f"    Train Loss: {train_loss}, Train Acc: {train_acc}")
+    print(f"    Val Loss: {val_loss}, Val Acc: {val_acc}")
+
+#%% Final results of simple CNN
+
+'''
+Epoch 10/10
+    Train Loss: 0.1718177301387422, Train Acc: 94.28689807568364
+    Val Loss: 0.2763154142180129, Val Acc: 92.82754810790904
+'''
+
+# %%
+## Using the resnet model instead
+
+# initialize
+model = models.resnet18(pretrained=True)
+print(model)
+
+# count parameters
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total Params: {total_params}")
+
+# feeeze early layers
+for param in model.parameters():
+    param.requires_grad = False
+
+# replace final layer
+num_ftrs = model.fc.in_features
+model.fc = nn.Linear(num_ftrs, num_classes)
+
+# setup
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+model = model.to(device)
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.fc.parameters(), lr=0.0010)
+
+#%%
+# running training for x epochs
+num_epochs = 5
+for epoch in range(num_epochs):
+    train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+    val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+
+    print(f"Epoch {epoch+1}/{num_epochs}")
+    print(f"    Train Loss: {train_loss}, Train Acc: {train_acc}")
+    print(f"    Val Loss: {val_loss}, Val Acc: {val_acc}")
+
+# %% resnet results
+'''
+ Epoch 5/5
+    Train Loss: 0.1261118509925337, Train Acc: 95.99254212319308
+    Val Loss: 0.12453029032194, Val Acc: 95.88435687321609
+'''
