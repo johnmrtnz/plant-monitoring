@@ -42,13 +42,30 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.fc.parameters(), lr=0.0010)
 
 # Loading in CIFAR-10 dataset
-transform = transforms.ToTensor()
+# transform = transforms.ToTensor()
+
+train_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.RandomCrop(224, padding = 4),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],  # ImageNet normalization
+                         std=[0.229, 0.224, 0.225])
+])
+
+test_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
+])
+
 
 trainset = torchvision.datasets.CIFAR10(root = './data', train=True ,
-                                        download = True, transform = transform)
+                                        download = True, transform = train_transform)
 
 testset = torchvision.datasets.CIFAR10(root = './data', train=False,
-                                       download = True, transform=transform)
+                                       download = True, transform=test_transform)
 
 # data loaders
 trainloader = DataLoader(trainset, batch_size=64, shuffle=True)
